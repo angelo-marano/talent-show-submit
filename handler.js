@@ -1,76 +1,45 @@
 "use strict";
 var AWS = require("aws-sdk");
-var uuid = require("uuid");
-const middy = require('middy')
-const { cors } = require('middy/middlewares')
+const middy = require("middy");
+const { cors } = require("middy/middlewares");
+const axios = require("axios");
 
-const hello = async (event) => {
-  return {
-    statusCode: 200,
-    body: JSON.stringify(
-      {
-        message: "Go Serverless v1.0! Your function executed successfully!",
-        input: event,
-      },
-      null,
-      2
-    ),
+const requestUploadUrl = async (event, context) => {
+  var s3 = new AWS.S3();
+  var params = JSON.parse(event.body);
+
+  var recaptchaPostBody = {
+    secret: process.env.RECAPTCHA_KEY,
+    response: params.metadata.captcha,
   };
 
-  // Use this code if you don't use the http event with the LAMBDA-PROXY integration
-  // return { message: 'Go Serverless v1.0! Your function executed successfully!', event };
-};
-
-const submit = async (event, context) => {
-
-  let submission = {};
+  const recaptchaUrl = `https://www.google.com/recaptcha/api/siteverify`;
 
   try {
-    const formData = JSON.parse(event.body);
-    const newId = uuid.v4();
-
-    submission = {
-      firstName: formData.firstName,
-      lastName: formData.lastName,
-      title: formData.title,
-      notes: formData.notes,
-      email: formData.email,
-      id: newId,
-    };
+    const response = await axios.post(recaptchaUrl, recaptchaPostBody);
   } catch (e) {
     console.error(e);
     return {
       statusCode: 400,
-      body: JSON.stringify(e),
+      body: "INVALID CAPTCHA!!!!!",
     };
   }
 
-  try {
-    const docClient = new AWS.DynamoDB.DocumentClient();
-    const response = await docClient.put({
-      TableName: "submissions",
-      Item: submission,
-    }).promise();
-    console.log("Dynamo response", response);
-  } catch (e) {
-    console.error(e);
-    return {
-      statusCode: 500,
-      body: JSON.stringify(e),
-    };
-  }
+  const s3Params = {
+    Bucket: "keyshake-talentshowupload",
+    Key: params.name,
+    ContentType: params.type,
+    Metadata: params.metadata,
+    ACL: "public-read",
+  };
 
+  var uploadURL = s3.getSignedUrl("putObject", s3Params);
   return {
-    statusCode: 201,
-    body: JSON.stringify({
-      message: "submission accepted",
-      submission : submission
-    }),
+    statusCode: 200,
+    body: JSON.stringify({ uploadURL: uploadURL }),
   };
 };
 
+const requestUploadUrlHandler = middy(requestUploadUrl).use(cors());
 
-const submitHandler = middy(submit).use(cors());
-const helloHandler = middy(hello).use(cors());
-
-module.exports = { submitHandler, helloHandler };
+module.exports = { requestUploadUrlHandler };
